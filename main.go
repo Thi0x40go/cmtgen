@@ -1,243 +1,72 @@
 package main
 
 import (
-	"bufio"
-	"bytes"
-	"encoding/json"
+	"flag"
 	"fmt"
-	"io"
-	"net/http"
-	"os"
-	"os/exec"
 	"strings"
 )
 
-const (
-	OneMB       = 1_000_000
-	GeminiModel = "gemini-2.5-flash"
-)
+func (cg *CommitGen) Run(customMsg string) {
+	var commitMessage string
 
-func getGitDiff() (string, error) {
-	cmd := exec.Command("git", "diff", "--staged")
-	var out bytes.Buffer
-	cmd.Stdout = &out
-	cmd.Stderr = os.Stderr
+	if customMsg != "" {
+		commitMessage = customMsg
+	} else {
+		diff, err := getGitDiff()
+		if err != nil {
+			fmt.Println("❌ Erro git:", err)
+			return
+		}
 
-	if err := cmd.Run(); err != nil {
-		return "", fmt.Errorf("erro ao obter git diff: %w", err)
+		subject := cg.UI.GetSubject()
+		basePrompt, _ := loadPrompt()
+		prompt := buildPrompt(basePrompt, subject, truncate(diff, OneMB))
+
+		fmt.Println("\n🧠 Gerando mensagem com Gemini...")
+		commitMessage, err = generateAI(prompt)
+		if err != nil {
+			fmt.Println("❌ Erro AI:", err)
+			return
+		}
 	}
 
-	return out.String(), nil
-}
-
-func truncate(text string, max int) string {
-	if len(text) > max {
-		return text[:max]
+	finalMsg, ok := cg.UI.ConfirmAndEdit(commitMessage)
+	if ok && finalMsg != "" {
+		if err := executeCommit(finalMsg); err != nil {
+			fmt.Println("❌ Falha no commit:", err)
+		} else {
+			fmt.Println("✅ Commit realizado com sucesso!")
+		}
+	} else {
+		fmt.Println("👋 Operação cancelada.")
 	}
-	return text
-}
-
-func getSubjectFromUser() string {
-	fmt.Print("Digite o subject do commit (ou deixe vazio): ")
-	reader := bufio.NewReader(os.Stdin)
-	subject, _ := reader.ReadString('\n')
-	return strings.TrimSpace(subject)
-}
-
-func loadPrompt() (string, error) {
-	data, err := os.ReadFile("commit_message_prompt.txt")
-	if err != nil {
-		return "", err
-	}
-	return string(data), nil
-}
-
-func buildPrompt(basePrompt, subject, diff string) string {
-	if subject == "" {
-		return fmt.Sprintf(`%s
-
-Here are the changes in this commit:
-%s
-`, basePrompt, diff)
-	}
-
-	return fmt.Sprintf(`%s
-
-Here is the user's subject line:
-%s
-
-Here are the changes in this commit:
-%s
-`, basePrompt, subject, diff)
-}
-
-type geminiRequest struct {
-	Contents []struct {
-		Parts []struct {
-			Text string `json:"text"`
-		} `json:"parts"`
-	} `json:"contents"`
-}
-
-type geminiResponse struct {
-	Candidates []struct {
-		Content struct {
-			Parts []struct {
-				Text string `json:"text"`
-			} `json:"parts"`
-		} `json:"content"`
-	} `json:"candidates"`
-}
-
-func generateCommitMessage(prompt string) (string, error) {
-	apiKey := os.Getenv("GEMINI_API_KEY")
-	if apiKey == "" {
-		return "", fmt.Errorf("GEMINI_API_KEY não definido")
-	}
-
-	url := fmt.Sprintf(
-		"https://generativelanguage.googleapis.com/v1beta/models/%s:generateContent?key=%s",
-		GeminiModel,
-		apiKey,
-	)
-
-	reqBody := geminiRequest{
-		Contents: []struct {
-			Parts []struct {
-				Text string `json:"text"`
-			} `json:"parts"`
-		}{
-			{
-				Parts: []struct {
-					Text string `json:"text"`
-				}{
-					{Text: prompt},
-				},
-			},
-		},
-	}
-
-	jsonData, _ := json.Marshal(reqBody)
-
-	req, err := http.NewRequest("POST", url, bytes.NewBuffer(jsonData))
-	if err != nil {
-		return "", err
-	}
-	req.Header.Set("Content-Type", "application/json")
-
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		return "", err
-	}
-	defer resp.Body.Close()
-
-	body, _ := io.ReadAll(resp.Body)
-
-	var parsed geminiResponse
-	if err := json.Unmarshal(body, &parsed); err != nil {
-		return "", err
-	}
-
-	if len(parsed.Candidates) == 0 {
-		return "", fmt.Errorf("resposta vazia da API")
-	}
-
-	return strings.TrimSpace(parsed.Candidates[0].Content.Parts[0].Text), nil
-}
-
-func editInNvim(msg string) (string, bool) {
-	socket := os.Getenv("NVIM")
-	if socket == "" {
-		return "", false
-	}
-
-	// Chama a função Lua que permite editar e retorna o texto final
-	cmd := exec.Command(
-		"nvim",
-		"--server",
-		socket,
-		"--remote-expr",
-		fmt.Sprintf(`luaeval("_G.GoEditAndConfirm(...)", [%q])`, msg),
-	)
-
-	out, err := cmd.Output()
-	if err != nil || strings.TrimSpace(string(out)) == "nil" {
-		return "", false
-	}
-
-	return strings.TrimSpace(string(out)), true
 }
 
 func main() {
-	var commitMessage string
+	// Definição clara dos flags
+	useNvim := flag.Bool("nvim", false, "Usar o Neovim para revisão/edição")
+	flag.Parse()
 
-	// 1. Verificar se foi passada uma mensagem via parâmetro
-	if len(os.Args) > 1 {
-		commitMessage = strings.Join(os.Args[1:], " ")
-	} else {
-		// 2. Fluxo atual: Gerar via Gemini
-		diff, err := getGitDiff()
+	var ui UIProvider
+	var err error
+
+	// Lógica de seleção:
+	// 1. Só usa Neovim se o usuário pedir explicitamente via --nvim
+	if *useNvim {
+		ui, err = NewNvimProvider()
 		if err != nil {
-			fmt.Println(err)
-			os.Exit(1)
-		}
-
-		diff = truncate(diff, OneMB)
-		subject := getSubjectFromUser()
-		basePrompt, err := loadPrompt()
-		if err != nil {
-			fmt.Println("Erro ao carregar prompt:", err)
-			os.Exit(1)
-		}
-
-		prompt := buildPrompt(basePrompt, subject, diff)
-		fmt.Println("\nGerando mensagem de commit com Gemini...\n")
-
-		commitMessage, err = generateCommitMessage(prompt)
-		if err != nil {
-			fmt.Println("Erro:", err)
-			os.Exit(1)
-		}
-	}
-
-	fmt.Println("Mensagem atual:\n")
-	fmt.Println(commitMessage)
-
-	var finalMessage string
-	var accepted bool
-
-	// 3. Tentar editar/confirmar via Neovim se disponível
-	finalMessage, accepted = editInNvim(commitMessage)
-
-	// 4. Fallback para terminal se não estiver no Neovim ou RPC falhar
-	if !accepted && os.Getenv("NVIM") == "" {
-		fmt.Print("\nDeseja fazer o commit com essa mensagem? (y/e/n) [e=editar]: ")
-		reader := bufio.NewReader(os.Stdin)
-		input, _ := reader.ReadString('\n')
-		choice := strings.TrimSpace(strings.ToLower(input))
-
-		if choice == "y" {
-			finalMessage = commitMessage
-			accepted = true
-		} else if choice == "e" {
-			// Simples fallback para edição via terminal se necessário
-			fmt.Print("Digite a nova mensagem: ")
-			finalMessage, _ = reader.ReadString('\n')
-			finalMessage = strings.TrimSpace(finalMessage)
-			accepted = (finalMessage != "")
-		}
-	}
-
-	if accepted && finalMessage != "" {
-		cmd := exec.Command("git", "commit", "-m", finalMessage)
-		cmd.Stdout = os.Stdout
-		cmd.Stderr = os.Stderr
-		if err := cmd.Run(); err != nil {
-			fmt.Println("Erro ao realizar commit:", err)
-		} else {
-			fmt.Println("\nCommit realizado com sucesso!")
+			fmt.Printf("⚠️  Erro ao conectar ao Neovim: %v. Usando terminal.\n", err)
+			ui = NewTerminalProvider()
 		}
 	} else {
-		fmt.Println("\nCommit cancelado.")
+		// 2. Caso contrário, funciona "como atualmente" (Terminal)
+		ui = NewTerminalProvider()
 	}
+
+	app := &CommitGen{UI: ui}
+
+	// Trata argumentos restantes como mensagem customizada
+	customMsg := strings.Join(flag.Args(), " ")
+
+	app.Run(customMsg)
 }
