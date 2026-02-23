@@ -1,21 +1,28 @@
-package main
+package ai
 
 import (
 	"bytes"
 	"encoding/json"
 	"fmt"
 	"net/http"
-	"os"
 	"strings"
 )
 
-func generateAI(prompt string) (string, error) {
-	apiKey := os.Getenv("GEMINI_API_KEY")
-	if apiKey == "" {
+type Provider interface {
+	Generate(prompt string) (string, error)
+}
+
+type GeminiProvider struct {
+	APIKey string
+	Model  string
+}
+
+func (p *GeminiProvider) Generate(prompt string) (string, error) {
+	if p.APIKey == "" {
 		return "", fmt.Errorf("GEMINI_API_KEY não configurada")
 	}
 
-	url := fmt.Sprintf("https://generativelanguage.googleapis.com/v1beta/models/%s:generateContent?key=%s", GeminiModel, apiKey)
+	url := fmt.Sprintf("https://generativelanguage.googleapis.com/v1beta/models/%s:generateContent?key=%s", p.Model, p.APIKey)
 
 	reqData := map[string]interface{}{
 		"contents": []map[string]interface{}{

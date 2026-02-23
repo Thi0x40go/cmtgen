@@ -1,16 +1,16 @@
-package main
+package git
 
 import (
 	"os"
 	"os/exec"
 )
 
-func getGitDiff() (string, error) {
+func GetDiff() (string, error) {
 	out, err := exec.Command("git", "diff", "--staged").Output()
 	return string(out), err
 }
 
-func executeCommit(msg string) error {
+func Commit(msg string) error {
 	cmd := exec.Command("git", "commit", "-m", msg)
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr

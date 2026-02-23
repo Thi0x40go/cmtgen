@@ -1,4 +1,4 @@
-package main
+package ui
 
 import (
 	"fmt"
@@ -14,7 +14,11 @@ type NvimProvider struct {
 func NewNvimProvider() (*NvimProvider, error) {
 	socket := os.Getenv("NVIM")
 	if socket == "" {
-		return nil, fmt.Errorf("variável $NVIM não encontrada")
+		socket = os.Getenv("NVIM_SERVER")
+	}
+
+	if socket == "" {
+		return nil, fmt.Errorf("variável $NVIM ou $NVIM_SERVER não encontrada")
 	}
 	return &NvimProvider{socket: socket}, nil
 }
@@ -30,8 +34,6 @@ func (p *NvimProvider) callLua(expr string) (string, error) {
 
 func (p *NvimProvider) GetSubject() string {
 	fmt.Println("👉 Aguardando assunto (subject) no Neovim...")
-
-	// Executa input diretamente e retorna o resultado
 	expr := `luaeval("vim.fn.input('Assunto do Commit: ')")`
 	result, err := p.callLua(expr)
 	if err != nil {
@@ -43,21 +45,18 @@ func (p *NvimProvider) GetSubject() string {
 
 func (p *NvimProvider) ConfirmAndEdit(msg string) (string, bool) {
 	fmt.Println("🚀 Revisando mensagem no Neovim...")
-
-	// Injetamos a lógica completa em uma função anônima auto-executável
-	// _A é o argumento (msg) passado pelo luaeval
 	luaCode := `
-(function(msg)
-  local edited = vim.fn.input('Mensagem de Commit: ', msg)
-  if edited == '' then return 'CANCEL' end
-  
-  local choice = vim.fn.confirm('Deseja confirmar o commit?', '&Sim\n&Não', 1)
-  if choice == 1 then 
-    return edited 
-  end
-  return 'CANCEL'
-end)(_A)
-`
+		(function(msg)
+			local edited = vim.fn.input('Mensagem de Commit: ', msg)
+			if edited == '' then return 'CANCEL' end
+			
+			local choice = vim.fn.confirm('Deseja confirmar o commit?', '&Sim\n&Não', 1)
+			if choice == 1 then 
+				return edited 
+			end
+			return 'CANCEL'
+		end)(_A)
+	`
 	expr := fmt.Sprintf(`luaeval(%q, %q)`, strings.TrimSpace(luaCode), msg)
 	result, err := p.callLua(expr)
 	if err != nil {
