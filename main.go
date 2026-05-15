@@ -2,6 +2,7 @@ package main
 
 import (
 	"commitgen/pkg/app"
+	"commitgen/pkg/config"
 	"flag"
 	"fmt"
 	"os"
@@ -10,17 +11,27 @@ import (
 func main() {
 	// Flags de orquestração
 	useNvim := flag.Bool("nvim", false, "Habilitar interface via Neovim RPC")
+	lang := flag.String("lang", "", "Definir idioma (pt, en)")
 	flag.Parse()
 
+	// Carrega a configuração (SOLID: Injeção de dependência via main)
+	cfg, err := config.LoadConfig()
+	if err != nil {
+		fmt.Printf("⚠️  Erro ao carregar configuração: %v. Usando padrões.\n", err)
+	}
+
+	// Sobrescreve idioma se passado via flag
+	if *lang != "" {
+		cfg.Language = *lang
+	}
+
 	// Inicializa a aplicação (Bootstrap)
-	// O pacote app resolve as dependências de AI, Config e UI
-	application, err := app.NewApp(*useNvim)
+	application, err := app.NewApp(cfg, *useNvim)
 	if err != nil {
 		fmt.Printf("❌ Erro fatal na inicialização: %v\n", err)
 		os.Exit(1)
 	}
 
 	// Executa o fluxo principal
-	// Repassa os argumentos extras como mensagem customizada
 	application.Run(flag.Args())
 }

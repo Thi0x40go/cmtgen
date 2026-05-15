@@ -8,6 +8,7 @@ import (
 
 type Config struct {
 	Provider string       `json:"provider"`
+	Language string       `json:"language"`
 	Gemini   GeminiConfig `json:"gemini"`
 }
 
@@ -19,20 +20,28 @@ type GeminiConfig struct {
 func LoadConfig() (*Config, error) {
 	cfg := &Config{
 		Provider: "gemini",
+		Language: "pt",
 		Gemini: GeminiConfig{
 			APIKey: os.Getenv("GEMINI_API_KEY"),
 			Model:  "gemini-2.5-flash",
 		},
 	}
 
-	home, err := os.UserHomeDir()
+	configDir, err := os.UserConfigDir()
 	if err != nil {
 		return cfg, nil
 	}
 
-	configPath := filepath.Join(home, ".commitgen.json")
+	configPath := filepath.Join(configDir, "commitgen", "config.json")
 	if _, err := os.Stat(configPath); os.IsNotExist(err) {
-		return cfg, nil
+		// Fallback to legacy path for backward compatibility
+		home, _ := os.UserHomeDir()
+		legacyPath := filepath.Join(home, ".commitgen.json")
+		if _, err := os.Stat(legacyPath); err == nil {
+			configPath = legacyPath
+		} else {
+			return cfg, nil
+		}
 	}
 
 	data, err := os.ReadFile(configPath)

@@ -12,16 +12,13 @@ import (
 )
 
 type CommitGen struct {
-	UI ui.Provider
-	AI ai.Provider
+	UI     ui.Provider
+	AI     ai.Provider
+	Config *config.Config
 }
 
-func NewApp(forceNvim bool) (*CommitGen, error) {
-	cfg, err := config.LoadConfig()
-	if err != nil {
-		fmt.Printf("⚠️  Aviso ao carregar config: %v. Usando padrão.\n", err)
-	}
-
+func NewApp(cfg *config.Config, forceNvim bool) (*CommitGen, error) {
+	var err error
 	var aiProvider ai.Provider
 	switch cfg.Provider {
 	case "gemini":
@@ -48,8 +45,9 @@ func NewApp(forceNvim bool) (*CommitGen, error) {
 	}
 
 	return &CommitGen{
-		UI: uiProvider,
-		AI: aiProvider,
+		UI:     uiProvider,
+		AI:     aiProvider,
+		Config: cfg,
 	}, nil
 }
 
@@ -68,7 +66,7 @@ func (cg *CommitGen) Run(args []string) {
 
 		subject := cg.UI.GetSubject()
 		basePrompt, _ := prompt.LoadPrompt()
-		fullPrompt := prompt.BuildPrompt(basePrompt, subject, prompt.Truncate(diff, prompt.OneMB))
+		fullPrompt := prompt.BuildPrompt(basePrompt, subject, prompt.Truncate(diff, prompt.OneMB), cg.Config.Language)
 
 		fmt.Println("\n🧠 Gerando mensagem com IA...")
 		commitMessage, err = cg.AI.Generate(fullPrompt)

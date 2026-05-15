@@ -16,7 +16,7 @@ You are an expert at writing Git commit messages following the
 Your job is to generate a short, clear commit message that summarizes the
 changes.
 
-The commit message **must be written in Portuguese** and follow this format:
+The commit message **must be written in %s** and follow this format:
 
 tipo(escopo opcional): descrição
 
@@ -67,6 +67,12 @@ func Truncate(text string, max int) string {
 	return text
 }
 
-func BuildPrompt(base, subject, diff string) string {
-	return fmt.Sprintf("%s\nSubject: %s\nDiff:\n%s", base, subject, diff)
+func BuildPrompt(base, subject, diff, lang string) string {
+	languageName := "Portuguese"
+	if lang == "en" {
+		languageName = "English"
+	}
+
+	instruction := fmt.Sprintf(base, languageName)
+	return fmt.Sprintf("%s\nSubject: %s\nDiff:\n%s", instruction, subject, diff)
 }
